@@ -1,0 +1,189 @@
+{% extends "base_template.html" %}
+{% load i18n static %}
+
+{% block content %}
+    <h1>{{ voting.id }} - {{ voting.name }}</h1>
+
+    <div id="login">
+        <p>If you have not created an account yet, then please <button onClick="window.location.href='/authentication/sign-up'">Sign up</button></p>
+        <label for="username">{% trans "Username" %}</label>
+        <input type="text" id="username" name="username" value=""/>
+        <br/>
+        <label for="password">{% trans "Password" %}</label>
+        <input type="password" id="password" name="password" value=""/>
+        <br/>
+        <input type="submit" value="{% trans "Login" %}" onClick="decideLogin()"/>
+    </div>
+
+    <div id="voting">
+        {% load account %}
+        {% user_display user as name %}
+        {% blocktrans %}Successfully signed in as {{name}}.{% endblocktrans %}
+        <a href="#" onClick="decideLogout()">{% trans "logout" %}</a>
+        <h2>{{ voting.question.desc }}</h2>
+
+        {% for opt in voting.question.options %}
+            <label for="q{{opt.number}}">
+                <input id="q{{opt.number}}" type="radio" name="question" value={{opt.number}} /> {{opt.option}}<br/>
+            </label>
+        {% endfor %}
+
+        <input type="submit" value="{% trans "Vote" %}" onClick="decideSend()"/>
+    </div>
+
+{% endblock %}
+
+{% block extrabody %}
+    <!-- needed to generate big random -->
+    <script src="{% static "crypto/sjcl.js" %}"></script>
+
+    <!-- Big integer -->
+    <script src="{% static "crypto/jsbn.js" %}"></script>
+    <script src="{% static "crypto/jsbn2.js" %}"></script>
+    <script src="{% static "crypto/bigint.js" %}"></script>
+
+    <!-- ElGamal encrypt -->
+    <script src="{% static "crypto/elgamal.js" %}"></script>
+
+    <script>
+        ElGamal.BITS = {{ KEYBITS }};
+        var bigpk = {
+            p: BigInt.fromJSONObject("{{voting.pub_key.p}}"),
+            g: BigInt.fromJSONObject("{{voting.pub_key.g}}"),
+            y: BigInt.fromJSONObject("{{voting.pub_key.y}}"),
+        };
+
+        var token = null;
+        var csrftoken = null;
+        var csrftoken_value = null;
+        var user = null;
+
+        function postData(url, data) {
+          // Default options are marked with *
+          var fdata = {
+            body: JSON.stringify(data),
+            headers: {
+              'content-type': 'application/json',
+            },
+            method: 'POST',
+          };
+          if (token) {
+              fdata.headers['Authorization'] = 'Token ' + token;
+          }
+          if(csrftoken_value){
+              fdata.headers['X-CSRFToken'] = csrftoken_value;
+          }
+          return fetch(url, fdata)
+          .then(response => {
+            if (response.status === 200) {
+                return response.json();
+            } else {
+                return Promise.reject(response.statusText);
+            }
+          });
+        }
+
+        function decideEncrypt() {
+            var msg = document.querySelector("input[name=question]:checked").value;
+            var bigmsg = BigInt.fromJSONObject(msg);
+            console.log(bigmsg);
+            var cipher = ElGamal.encrypt(bigpk, bigmsg);
+            return cipher;
+        }
+
+        function decideSend() {
+            var v = decideEncrypt();
+            var data = {
+                vote: {a: v.alpha.toString(), b: v.beta.toString()},
+                voting: {{voting.id}},
+                voter: user.id,
+                token: token
+            };
+            postData("{{store_url}}" + "/store/", data)
+              .then(data => {
+                alert("{% trans "Congratulations. Your vote has been sent" %}");
+                console.log(v);
+              })
+              .catch(error => {
+                alert("{% trans "Error: " %}" + error);
+                console.error(error);
+              });
+        }
+
+        function decideLogout() {
+            postData("{{auth_url}}" + "/rest-auth/logout/");
+
+            token = null;
+            user = null;
+            document.cookie = 'decide=;csrftoken=; path=/';
+            panel('login');
+            window.location.href = "/authentication/logout";
+        }
+
+        function decideUser() {
+            var data = { token: token , csrftoken: csrftoken_value };
+            postData("{{auth_url}}" + "/authentication/getuser/", data)
+              .then(data => {
+                user = data;
+                if(user.id){
+                    panel('voting');
+                }
+              }).catch(error => {
+                alert("{% trans "Error: " %}" + error);
+              });
+        }
+
+        function decideLogin() {
+            var data = {
+                username: document.querySelector("#username").value,
+                password: document.querySelector("#password").value,
+            };
+            postData("{{auth_url}}" + "/rest-auth/login/", data)
+              .then(data => {
+                document.cookie = 'decide='+data.key+'; path=/';
+                token = data.key;
+                decideUser();
+              })
+              .catch(error => {
+                alert("{% trans "Error: " %}" + error);
+                console.error(error);
+              });
+        }
+
+         function panel(p) {
+            switch(p) {
+                case 'login':
+                    document.querySelector("#voting").style.display = "none";
+                    document.querySelector("#login").style.display = "block";
+                    break;
+                case 'voting':
+                default:
+                    document.querySelector("#voting").style.display = "block";
+                    document.querySelector("#login").style.display = "none";
+                    break;
+            };
+        }
+
+        function init() {
+            panel('login');
+            
+            var cookies = document.cookie.split("; ");
+            cookies.forEach((c) => {
+                var cs = c.split("=");
+                if (cs[0] == 'decide' && cs[1]) {
+                    token = cs[1];
+                    decideUser();
+                }
+
+                if(cs[0] == 'csrftoken' && cs[1]){
+                    csrftoken_value = cs[1];
+                    decideUser();
+                }
+            });
+        }
+        init();
+    </script>
+</body>
+{% endblock %}
+
+
