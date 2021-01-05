@@ -17,7 +17,7 @@
   "author": "Asen Rangelov Baykushev",
   "license": "ISC",
   "dependencies": {
-    "axios": "^0.18.0",
+    "axios": "^0.21.1",
     "bluebird": "^3.5.3",
     "body-parser": "^1.17.1",
     "bootbot": "^1.0.12",
